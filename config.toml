@@ -1,0 +1,32 @@
+
+[server1]
+host = "localhost"
+port = 3306
+database = "nroz"
+username = "root"
+password = "123"
+
+[server2]
+host = "localhost"
+port = 3306
+database = "nroz_tanbinh"
+username = "root"
+password = "123"
+
+[merge]
+# ID Offset - Dựa vào số liệu:
+# Server 1: account max = 32,579, player max = 27,682
+# Server 2: account max = 26,777, player max = 21,519
+# sau khi merge account 59,356 , player 49,201 
+# => Offset = 50,000 là đủ an toàn
+id_offset = 50000
+
+# Server đích (1 hoặc 2)
+target_server = 1
+
+# Backup trước khi merge
+backup_before_merge = true
+backup_directory = "./backup"
+
+# Batch size khi insert (tối ưu performance)
+batch_size = 100

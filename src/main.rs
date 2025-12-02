@@ -522,12 +522,17 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    let timer = std::time::Instant::now();
+
     let config_str = fs::read_to_string(config_path)?;
     let config: Config = toml::from_str(&config_str)?;
 
     // Tạo tool và chạy
     let mut tool = MergeTool::new(config, args.dry_run)?;
     tool.execute()?;
+
+    let duration = timer.elapsed();
+    println!("Thời gian chạy: {}s", duration.as_secs());
 
     Ok(())
 }

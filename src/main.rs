@@ -182,6 +182,9 @@ impl MergeTool {
         // Tắt foreign key check tạm thời
         target_conn.query_drop("SET FOREIGN_KEY_CHECKS=0")?;
         
+        // Tạo cột old_id nếu chưa có
+        self.ensure_old_id_columns(target_conn)?;
+
         // Merge theo thứ tự
         self.merge_accounts(target_conn, source_conn)?;
         self.merge_players(target_conn, source_conn)?;
@@ -194,6 +197,44 @@ impl MergeTool {
 
         // Verify
         self.verify_merge(target_conn)?;
+
+        Ok(())
+    }
+
+    fn ensure_old_id_columns(&self, conn: &mut PooledConn) -> Result<()> {
+        println!("\n{}", ">>> Kiểm tra và tạo cột old_id...".bright_yellow());
+
+        // Kiểm tra và thêm cột old_id cho bảng account
+        let account_has_old_id: Option<String> = conn.query_first(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'account' AND COLUMN_NAME = 'old_id'"
+        )?;
+
+        if account_has_old_id.is_none() {
+            println!("  Tạo cột old_id cho bảng account...");
+            if !self.dry_run {
+                conn.query_drop("ALTER TABLE account ADD COLUMN old_id INT NULL COMMENT 'ID cũ trước khi merge'")?;
+            }
+            println!("{} Đã tạo cột old_id cho bảng account", "✓".green());
+        } else {
+            println!("{} Cột old_id đã tồn tại trong bảng account", "✓".green());
+        }
+
+        // Kiểm tra và thêm cột old_id cho bảng player
+        let player_has_old_id: Option<String> = conn.query_first(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'player' AND COLUMN_NAME = 'old_id'"
+        )?;
+
+        if player_has_old_id.is_none() {
+            println!("  Tạo cột old_id cho bảng player...");
+            if !self.dry_run {
+                conn.query_drop("ALTER TABLE player ADD COLUMN old_id INT NULL COMMENT 'ID cũ trước khi merge'")?;
+            }
+            println!("{} Đã tạo cột old_id cho bảng player", "✓".green());
+        } else {
+            println!("{} Cột old_id đã tồn tại trong bảng player", "✓".green());
+        }
 
         Ok(())
     }
@@ -257,9 +298,10 @@ impl MergeTool {
             self.account_mapping.insert(old_id, new_id);
 
             if !self.dry_run {
-                // Insert vào target
+                // Insert vào target với old_id là ID cũ từ server nguồn
                 let params = params! {
                     "id" => new_id,
+                    "old_id" => old_id,  // Lưu ID cũ
                     "username" => row.get::<String, _>("username").unwrap(),
                     "password" => row.get::<String, _>("password").unwrap(),
                     "active" => row.get::<i32, _>("active").unwrap_or(0),
@@ -276,9 +318,9 @@ impl MergeTool {
                 
                 target_conn.exec_drop(
                     r"INSERT INTO account 
-                    (id, username, password, active, thoi_vang, vnd, ban, ip_address, 
-                     last_time_login, last_time_logout, is_admin, reward, `pointNap`) 
-                    VALUES (:id, :username, :password, :active, :thoi_vang, :vnd, :ban, 
+                    (id, old_id, username, password, active, thoi_vang, vnd, ban, ip_address,
+                     last_time_login, last_time_logout, is_admin, reward, `pointNap`)
+                    VALUES (:id, :old_id, :username, :password, :active, :thoi_vang, :vnd, :ban,
                             :ip_address, :last_time_login, :last_time_logout, :is_admin, :reward, :point_nap)",
                     params,
                 )?;
@@ -307,6 +349,10 @@ impl MergeTool {
             );
             target_conn.query_drop(&sql)?;
             
+            // Thêm cột old_id vào temp table và lưu ID cũ
+            target_conn.query_drop("ALTER TABLE temp_player ADD COLUMN old_id INT NULL")?;
+            target_conn.query_drop("UPDATE temp_player SET old_id = id")?;
+
             // Update IDs trong temp table
             target_conn.query_drop(&format!("UPDATE temp_player SET id = id + {}", offset))?;
             target_conn.query_drop(&format!("UPDATE temp_player SET account_id = account_id + {}", offset))?;

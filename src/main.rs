@@ -101,7 +101,10 @@ impl MergeTool {
     }
 
     fn execute(&mut self) -> Result<()> {
-        println!("\n{}", "=== BẮT ĐẦU MERGE 2 SERVER ===".bright_cyan().bold());
+        println!(
+            "\n{}",
+            "=== BẮT ĐẦU MERGE 2 SERVER ===".bright_cyan().bold()
+        );
         println!("Server đích: {}", self.config.merge.target_server);
         println!("ID Offset: {}", self.config.merge.id_offset);
         println!(
@@ -119,10 +122,7 @@ impl MergeTool {
 
         // 2. Xác nhận từ user
         if !self.dry_run {
-            println!(
-                "\n{} Bạn có muốn tiếp tục merge? (yes/no): ",
-                "⚠️".yellow()
-            );
+            println!("\n{} Bạn có muốn tiếp tục merge? (yes/no): ", "⚠️".yellow());
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
             if input.trim().to_lowercase() != "yes" {
@@ -149,10 +149,7 @@ impl MergeTool {
                 if self.dry_run {
                     println!("\n{}", "✓ DRY RUN hoàn thành".green().bold());
                 } else {
-                    println!(
-                        "\n{} Bạn có muốn COMMIT thay đổi? (yes/no): ",
-                        "⚠".yellow()
-                    );
+                    println!("\n{} Bạn có muốn COMMIT thay đổi? (yes/no): ", "⚠".yellow());
                     let mut input = String::new();
                     io::stdin().read_line(&mut input)?;
 
@@ -178,10 +175,14 @@ impl MergeTool {
         }
     }
 
-    fn run_merge(&mut self, target_conn: &mut PooledConn, source_conn: &mut PooledConn) -> Result<()> {
+    fn run_merge(
+        &mut self,
+        target_conn: &mut PooledConn,
+        source_conn: &mut PooledConn,
+    ) -> Result<()> {
         // Tắt foreign key check tạm thời
         target_conn.query_drop("SET FOREIGN_KEY_CHECKS=0")?;
-        
+
         // Tạo cột old_id nếu chưa có
         self.ensure_old_id_columns(target_conn)?;
 
@@ -207,7 +208,7 @@ impl MergeTool {
         // Kiểm tra và thêm cột old_id cho bảng account
         let account_has_old_id: Option<String> = conn.query_first(
             "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'account' AND COLUMN_NAME = 'old_id'"
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'account' AND COLUMN_NAME = 'old_id'",
         )?;
 
         if account_has_old_id.is_none() {
@@ -223,13 +224,15 @@ impl MergeTool {
         // Kiểm tra và thêm cột old_id cho bảng player
         let player_has_old_id: Option<String> = conn.query_first(
             "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'player' AND COLUMN_NAME = 'old_id'"
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'player' AND COLUMN_NAME = 'old_id'",
         )?;
 
         if player_has_old_id.is_none() {
             println!("  Tạo cột old_id cho bảng player...");
             if !self.dry_run {
-                conn.query_drop("ALTER TABLE player ADD COLUMN old_id INT NULL COMMENT 'ID cũ trước khi merge'")?;
+                conn.query_drop(
+                    "ALTER TABLE player ADD COLUMN old_id INT NULL COMMENT 'ID cũ trước khi merge'",
+                )?;
             }
             println!("{} Đã tạo cột old_id cho bảng player", "✓".green());
         } else {
@@ -246,12 +249,7 @@ impl MergeTool {
         let mut server2_conn = self.server2_pool.get_conn()?;
 
         let clan_table = format!("clan_sv{}", self.config.merge.target_server);
-        let tables = vec![
-            "account",
-            "player",
-            &clan_table,
-            "gift_code_histories",
-        ];
+        let tables = vec!["account", "player", &clan_table, "gift_code_histories"];
 
         for table in tables {
             let count1 = self.get_row_count(&mut server1_conn, table)?;
@@ -275,10 +273,13 @@ impl MergeTool {
         Ok(count.unwrap_or(0))
     }
 
-    fn merge_accounts(&mut self, target_conn: &mut PooledConn, source_conn: &mut PooledConn) -> Result<()> {
+    fn merge_accounts(
+        &mut self,
+        target_conn: &mut PooledConn,
+        source_conn: &mut PooledConn,
+    ) -> Result<()> {
         println!("\n{}", ">>> Merge bảng ACCOUNT...".bright_yellow());
 
-        // Lấy tất cả accounts từ Server 2
         let accounts: Vec<Row> = source_conn.query("SELECT * FROM account")?;
 
         let pb = ProgressBar::new(accounts.len() as u64);
@@ -289,7 +290,7 @@ impl MergeTool {
         );
 
         let total_accounts = accounts.len();
-        
+
         for row in accounts {
             let old_id: i32 = row.get("id").unwrap();
             let new_id = old_id + self.config.merge.id_offset;
@@ -298,30 +299,64 @@ impl MergeTool {
             self.account_mapping.insert(old_id, new_id);
 
             if !self.dry_run {
-                // Insert vào target với old_id là ID cũ từ server nguồn
                 let params = params! {
                     "id" => new_id,
-                    "old_id" => old_id,  // Lưu ID cũ
+                    "old_id" => old_id,
                     "username" => row.get::<String, _>("username").unwrap(),
                     "password" => row.get::<String, _>("password").unwrap(),
-                    "active" => row.get::<i32, _>("active").unwrap_or(0),
-                    "thoi_vang" => row.get::<i32, _>("thoi_vang").unwrap_or(0),
-                    "vnd" => row.get::<i32, _>("vnd").unwrap_or(0),
-                    "ban" => row.get::<bool, _>("ban").unwrap_or(false),
-                    "ip_address" => row.get::<Option<String>, _>("ip_address"),
+                    "create_time" => row.get::<Option<String>, _>("create_time"),
+                    "update_time" => row.get::<Option<String>, _>("update_time"),
+                    "ban" => row.get::<i16, _>("ban").unwrap_or(0),
+                    "point_post" => row.get::<i32, _>("point_post").unwrap_or(0),
+                    "last_post" => row.get::<i32, _>("last_post").unwrap_or(0),
+                    "role" => row.get::<i32, _>("role").unwrap_or(-1),
+                    "is_admin" => row.get::<bool, _>("is_admin").unwrap_or(false),
                     "last_time_login" => row.get::<Option<String>, _>("last_time_login"),
                     "last_time_logout" => row.get::<Option<String>, _>("last_time_logout"),
-                    "is_admin" => row.get::<bool, _>("is_admin").unwrap_or(false),
+                    "ip_address" => row.get::<Option<String>, _>("ip_address"),
+                    "active" => row.get::<i32, _>("active").unwrap_or(0),
                     "reward" => row.get::<Option<String>, _>("reward"),
+                    "thoi_vang" => row.get::<i32, _>("thoi_vang").unwrap_or(0),
+                    "server_login" => row.get::<i32, _>("server_login").unwrap_or(1),
+                    "new_reg" => row.get::<i32, _>("new_reg").unwrap_or(0),
+                    "ip" => row.get::<Option<String>, _>("ip"),
+                    "phone" => row.get::<Option<String>, _>("phone"),
+                    "last_server_change_time" => row.get::<Option<String>, _>("last_server_change_time"),
+                    "ruby" => row.get::<i32, _>("ruby").unwrap_or(0),
+                    "count_card" => row.get::<Option<i32>, _>("count_card"),
+                    "type_bonus" => row.get::<Option<i32>, _>("type_bonus"),
+                    "ref" => row.get::<Option<String>, _>("ref"),
+                    "diemgioithieu" => row.get::<i32, _>("diemgioithieu").unwrap_or(0),
+                    "vnd_old" => row.get::<i32, _>("vnd_old").unwrap_or(0),
+                    "tongnap_old" => row.get::<i32, _>("tongnap_old").unwrap_or(0),
+                    "gioithieu" => row.get::<i32, _>("gioithieu").unwrap_or(0),
+                    "tongnap" => row.get::<i32, _>("tongnap").unwrap_or(0),
+                    "account_old" => row.get::<i32, _>("account_old").unwrap_or(0),
                     "point_nap" => row.get::<i32, _>("pointNap").unwrap_or(0),
+                    "vnd" => row.get::<i32, _>("vnd").unwrap_or(0),
+                    "tongnapcu" => row.get::<i32, _>("tongnapcu").unwrap_or(0),
+                    "is_daily" => row.get::<Option<bool>, _>("is_daily"),
+                    "money" => row.get::<Option<i32>, _>("money"),
+                    "isAdmin" => row.get::<Option<bool>, _>("isAdmin"),
+                    "purchasedGifts" => row.get::<Option<String>, _>("purchasedGifts"),
+                    "claimed_accumulate" => row.get::<Option<String>, _>("claimed_accumulate"),
+                    "ip_address_register" => row.get::<Option<String>, _>("ip_address_register"),
                 };
-                
+
                 target_conn.exec_drop(
-                    r"INSERT INTO account 
-                    (id, old_id, username, password, active, thoi_vang, vnd, ban, ip_address,
-                     last_time_login, last_time_logout, is_admin, reward, `pointNap`)
-                    VALUES (:id, :old_id, :username, :password, :active, :thoi_vang, :vnd, :ban,
-                            :ip_address, :last_time_login, :last_time_logout, :is_admin, :reward, :point_nap)",
+                    r"INSERT INTO account
+                (id, old_id, username, password, create_time, update_time, ban, point_post, last_post,
+                 role, is_admin, last_time_login, last_time_logout, ip_address, active, reward,
+                 thoi_vang, server_login, new_reg, ip, phone, last_server_change_time, ruby,
+                 count_card, type_bonus, ref, diemgioithieu, vnd_old, tongnap_old, gioithieu,
+                 tongnap, account_old, `pointNap`, vnd, tongnapcu, is_daily, money, isAdmin,
+                 purchasedGifts, claimed_accumulate, ip_address_register)
+                VALUES (:id, :old_id, :username, :password, :create_time, :update_time, :ban, :point_post, :last_post,
+                        :role, :is_admin, :last_time_login, :last_time_logout, :ip_address, :active, :reward,
+                        :thoi_vang, :server_login, :new_reg, :ip, :phone, :last_server_change_time, :ruby,
+                        :count_card, :type_bonus, :ref, :diemgioithieu, :vnd_old, :tongnap_old, :gioithieu,
+                        :tongnap, :account_old, :point_nap, :vnd, :tongnapcu, :is_daily, :money, :isAdmin,
+                        :purchasedGifts, :claimed_accumulate, :ip_address_register)",
                     params,
                 )?;
             }
@@ -334,13 +369,17 @@ impl MergeTool {
         Ok(())
     }
 
-    fn merge_players(&mut self, target_conn: &mut PooledConn, source_conn: &mut PooledConn) -> Result<()> {
+    fn merge_players(
+        &mut self,
+        target_conn: &mut PooledConn,
+        source_conn: &mut PooledConn,
+    ) -> Result<()> {
         println!("\n{}", ">>> Merge bảng PLAYER...".bright_yellow());
 
         // Đơn giản hơn - dùng INSERT ... SELECT với UPDATE ID
         let clan_col = format!("clan_id_sv{}", self.config.merge.target_server);
         let offset = self.config.merge.id_offset;
-        
+
         if !self.dry_run {
             // Tạo temp table rồi UPDATE ID sau
             let sql = format!(
@@ -348,19 +387,22 @@ impl MergeTool {
                 self.config.server2.database
             );
             target_conn.query_drop(&sql)?;
-            
+
             // Thêm cột old_id vào temp table và lưu ID cũ
             target_conn.query_drop("ALTER TABLE temp_player ADD COLUMN old_id INT NULL")?;
             target_conn.query_drop("UPDATE temp_player SET old_id = id")?;
 
             // Update IDs trong temp table
             target_conn.query_drop(&format!("UPDATE temp_player SET id = id + {}", offset))?;
-            target_conn.query_drop(&format!("UPDATE temp_player SET account_id = account_id + {}", offset))?;
+            target_conn.query_drop(&format!(
+                "UPDATE temp_player SET account_id = account_id + {}",
+                offset
+            ))?;
             target_conn.query_drop(&format!(
                 "UPDATE temp_player SET `{}` = IF(`{}` = -1, -1, `{}` + {})",
                 clan_col, clan_col, clan_col, offset
             ))?;
-            
+
             // Insert vào player thật
             target_conn.query_drop("INSERT INTO player SELECT * FROM temp_player")?;
             target_conn.query_drop("DROP TEMPORARY TABLE temp_player")?;
@@ -369,7 +411,7 @@ impl MergeTool {
         // Build mapping
         let players: Vec<Row> = source_conn.query("SELECT id FROM player")?;
         let total_players = players.len();
-        
+
         for row in players {
             let old_id: i32 = row.get("id").unwrap();
             let new_id = old_id + offset;
@@ -380,7 +422,11 @@ impl MergeTool {
         Ok(())
     }
 
-    fn merge_clans(&mut self, target_conn: &mut PooledConn, source_conn: &mut PooledConn) -> Result<()> {
+    fn merge_clans(
+        &mut self,
+        target_conn: &mut PooledConn,
+        source_conn: &mut PooledConn,
+    ) -> Result<()> {
         println!("\n{}", ">>> Merge bảng CLAN...".bright_yellow());
 
         let table_name = format!("clan_sv{}", self.config.merge.target_server);
@@ -400,8 +446,8 @@ impl MergeTool {
 
                 target_conn.exec_drop(
                     &format!(
-                        r"INSERT INTO {} 
-                        (id, name, slogan, img_id, power_point, max_member, clan_point, level, members) 
+                        r"INSERT INTO {}
+                        (id, name, slogan, img_id, power_point, max_member, clan_point, level, members)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         table_name
                     ),
@@ -441,7 +487,11 @@ impl MergeTool {
         Ok(serde_json::to_string(&members)?)
     }
 
-    fn merge_gift_code_histories(&mut self, target_conn: &mut PooledConn, source_conn: &mut PooledConn) -> Result<()> {
+    fn merge_gift_code_histories(
+        &mut self,
+        target_conn: &mut PooledConn,
+        source_conn: &mut PooledConn,
+    ) -> Result<()> {
         println!("\n{}", ">>> Merge GIFT_CODE_HISTORIES...".bright_yellow());
 
         let histories: Vec<Row> = source_conn.query("SELECT * FROM gift_code_histories")?;
@@ -456,8 +506,8 @@ impl MergeTool {
 
             if !self.dry_run {
                 target_conn.exec_drop(
-                    r"INSERT INTO gift_code_histories 
-                    (player_id, gift_code_id, code, type_clone, created_at) 
+                    r"INSERT INTO gift_code_histories
+                    (player_id, gift_code_id, code, type_clone, created_at)
                     VALUES (?, ?, ?, ?, ?)",
                     (
                         new_player_id,
@@ -474,7 +524,11 @@ impl MergeTool {
         Ok(())
     }
 
-    fn merge_other_tables(&mut self, target_conn: &mut PooledConn, source_conn: &mut PooledConn) -> Result<()> {
+    fn merge_other_tables(
+        &mut self,
+        target_conn: &mut PooledConn,
+        source_conn: &mut PooledConn,
+    ) -> Result<()> {
         println!("\n{}", ">>> Merge các bảng phụ...".bright_yellow());
 
         // Merge player_vip
@@ -509,36 +563,39 @@ impl MergeTool {
 
         // Check player without account
         let orphan_players: Option<i64> = conn.query_first(
-            "SELECT COUNT(*) FROM player p 
-             LEFT JOIN account a ON p.account_id = a.id 
+            "SELECT COUNT(*) FROM player p
+             LEFT JOIN account a ON p.account_id = a.id
              WHERE a.id IS NULL",
         )?;
 
         if let Some(count) = orphan_players {
             if count > 0 {
                 println!("{} {} players không có account!", "⚠".yellow(), count);
-                
+
                 // Log chi tiết các player orphan
                 let orphans: Vec<(i32, String, i32)> = conn.query(
-                    "SELECT p.id, p.name, p.account_id FROM player p 
-                     LEFT JOIN account a ON p.account_id = a.id 
-                     WHERE a.id IS NULL 
-                     LIMIT 20"
+                    "SELECT p.id, p.name, p.account_id FROM player p
+                     LEFT JOIN account a ON p.account_id = a.id
+                     WHERE a.id IS NULL
+                     LIMIT 20",
                 )?;
-                
+
                 println!("\n{}", "Chi tiết players không có account:".yellow());
                 println!("{:<10} {:<30} {:<15}", "ID", "Name", "Account_ID");
                 println!("{}", "-".repeat(60));
                 for (id, name, acc_id) in orphans {
                     println!("{:<10} {:<30} {:<15}", id, name, acc_id);
                 }
-                
+
                 if count > 20 {
                     println!("\n... và {} players khác", count - 20);
                 }
-                
+
                 println!("\n{}", "Các players này sẽ KHÔNG thể login được!".red());
-                println!("{}", "Khuyến nghị: Xóa hoặc tạo account cho họ sau khi merge.".yellow());
+                println!(
+                    "{}",
+                    "Khuyến nghị: Xóa hoặc tạo account cho họ sau khi merge.".yellow()
+                );
             } else {
                 println!("{} Tất cả players đều có account", "✓".green());
             }
@@ -559,11 +616,7 @@ fn main() -> Result<()> {
     // Load config
     let config_path = Path::new(&args.config);
     if !config_path.exists() {
-        eprintln!(
-            "{} File config không tồn tại: {}",
-            "✗".red(),
-            args.config
-        );
+        eprintln!("{} File config không tồn tại: {}", "✗".red(), args.config);
         eprintln!("Hãy copy config.toml thành config.production.toml và cấu hình");
         std::process::exit(1);
     }

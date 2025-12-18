@@ -34,7 +34,7 @@ struct DatabaseConfig {
 struct MergeConfig {
     id_offset: i32,
     target_server: u8,
-    backup_before_merge: bool,
+    // backup_before_merge: bool,
     backup_directory: String,
     batch_size: usize,
 }
@@ -273,6 +273,28 @@ impl MergeTool {
         Ok(count.unwrap_or(0))
     }
 
+    // Helper function để đọc BIT(1) từ MySQL
+    fn get_bit_as_bool(row: &Row, col: &str) -> Option<bool> {
+        // BIT(1) có thể trả về dạng bytes hoặc i8
+        if let Some(val) = row.get_opt::<Value, _>(col) {
+            match val {
+                Ok(Value::Bytes(bytes)) => {
+                    if bytes.is_empty() {
+                        Some(false)
+                    } else {
+                        Some(bytes[0] != 0)
+                    }
+                }
+                Ok(Value::Int(i)) => Some(i != 0),
+                Ok(Value::UInt(u)) => Some(u != 0),
+                Ok(Value::NULL) => None,
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
     fn merge_accounts(
         &mut self,
         target_conn: &mut PooledConn,
@@ -299,65 +321,69 @@ impl MergeTool {
             self.account_mapping.insert(old_id, new_id);
 
             if !self.dry_run {
-                let params = params! {
-                    "id" => new_id,
-                    "old_id" => old_id,
-                    "username" => row.get::<String, _>("username").unwrap(),
-                    "password" => row.get::<String, _>("password").unwrap(),
-                    "create_time" => row.get::<Option<String>, _>("create_time"),
-                    "update_time" => row.get::<Option<String>, _>("update_time"),
-                    "ban" => row.get::<i16, _>("ban").unwrap_or(0),
-                    "point_post" => row.get::<i32, _>("point_post").unwrap_or(0),
-                    "last_post" => row.get::<i32, _>("last_post").unwrap_or(0),
-                    "role" => row.get::<i32, _>("role").unwrap_or(-1),
-                    "is_admin" => row.get::<bool, _>("is_admin").unwrap_or(false),
-                    "last_time_login" => row.get::<Option<String>, _>("last_time_login"),
-                    "last_time_logout" => row.get::<Option<String>, _>("last_time_logout"),
-                    "ip_address" => row.get::<Option<String>, _>("ip_address"),
-                    "active" => row.get::<i32, _>("active").unwrap_or(0),
-                    "reward" => row.get::<Option<String>, _>("reward"),
-                    "thoi_vang" => row.get::<i32, _>("thoi_vang").unwrap_or(0),
-                    "server_login" => row.get::<i32, _>("server_login").unwrap_or(1),
-                    "new_reg" => row.get::<i32, _>("new_reg").unwrap_or(0),
-                    "ip" => row.get::<Option<String>, _>("ip"),
-                    "phone" => row.get::<Option<String>, _>("phone"),
-                    "last_server_change_time" => row.get::<Option<String>, _>("last_server_change_time"),
-                    "ruby" => row.get::<i32, _>("ruby").unwrap_or(0),
-                    "count_card" => row.get::<Option<i32>, _>("count_card"),
-                    "type_bonus" => row.get::<Option<i32>, _>("type_bonus"),
-                    "ref" => row.get::<Option<String>, _>("ref"),
-                    "diemgioithieu" => row.get::<i32, _>("diemgioithieu").unwrap_or(0),
-                    "vnd_old" => row.get::<i32, _>("vnd_old").unwrap_or(0),
-                    "tongnap_old" => row.get::<i32, _>("tongnap_old").unwrap_or(0),
-                    "gioithieu" => row.get::<i32, _>("gioithieu").unwrap_or(0),
-                    "tongnap" => row.get::<i32, _>("tongnap").unwrap_or(0),
-                    "account_old" => row.get::<i32, _>("account_old").unwrap_or(0),
-                    "point_nap" => row.get::<i32, _>("pointNap").unwrap_or(0),
-                    "vnd" => row.get::<i32, _>("vnd").unwrap_or(0),
-                    "tongnapcu" => row.get::<i32, _>("tongnapcu").unwrap_or(0),
-                    "is_daily" => row.get::<Option<bool>, _>("is_daily"),
-                    "money" => row.get::<Option<i32>, _>("money"),
-                    "isAdmin" => row.get::<Option<bool>, _>("isAdmin"),
-                    "purchasedGifts" => row.get::<Option<String>, _>("purchasedGifts"),
-                    "claimed_accumulate" => row.get::<Option<String>, _>("claimed_accumulate"),
-                    "ip_address_register" => row.get::<Option<String>, _>("ip_address_register"),
-                };
+                // Xử lý các cột BIT(1) đặc biệt
+                let is_daily = Self::get_bit_as_bool(&row, "is_daily");
+                let is_admin_bit = Self::get_bit_as_bool(&row, "isAdmin");
+
+                let params: Vec<Value> = vec![
+                    Value::from(new_id),
+                    Value::from(old_id),
+                    Value::from(row.get::<String, _>("username").unwrap()),
+                    Value::from(row.get::<String, _>("password").unwrap()),
+                    row.get::<Value, _>("create_time").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("update_time").unwrap_or(Value::NULL),
+                    Value::from(row.get::<i16, _>("ban").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("point_post").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("last_post").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("role").unwrap_or(-1)),
+                    Value::from(row.get::<i8, _>("is_admin").unwrap_or(0)),
+                    row.get::<Value, _>("last_time_login").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("last_time_logout").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("ip_address").unwrap_or(Value::NULL),
+                    Value::from(row.get::<i32, _>("active").unwrap_or(0)),
+                    row.get::<Value, _>("reward").unwrap_or(Value::NULL),
+                    Value::from(row.get::<i32, _>("thoi_vang").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("server_login").unwrap_or(1)),
+                    Value::from(row.get::<i32, _>("new_reg").unwrap_or(0)),
+                    row.get::<Value, _>("ip").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("phone").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("last_server_change_time").unwrap_or(Value::NULL),
+                    Value::from(row.get::<i32, _>("ruby").unwrap_or(0)),
+                    row.get::<Value, _>("count_card").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("type_bonus").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("ref").unwrap_or(Value::NULL),
+                    Value::from(row.get::<i32, _>("diemgioithieu").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("vnd_old").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("tongnap_old").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("gioithieu").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("tongnap").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("account_old").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("pointNap").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("vnd").unwrap_or(0)),
+                    Value::from(row.get::<i32, _>("tongnapcu").unwrap_or(0)),
+                    match is_daily { Some(b) => Value::from(b), None => Value::NULL },
+                    row.get::<Value, _>("money").unwrap_or(Value::NULL),
+                    match is_admin_bit { Some(b) => Value::from(b), None => Value::NULL },
+                    row.get::<Value, _>("purchasedGifts").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("claimed_accumulate").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("ip_address_register").unwrap_or(Value::NULL),
+                ];
 
                 target_conn.exec_drop(
                     r"INSERT INTO account
-                (id, old_id, username, password, create_time, update_time, ban, point_post, last_post,
-                 role, is_admin, last_time_login, last_time_logout, ip_address, active, reward,
-                 thoi_vang, server_login, new_reg, ip, phone, last_server_change_time, ruby,
-                 count_card, type_bonus, ref, diemgioithieu, vnd_old, tongnap_old, gioithieu,
-                 tongnap, account_old, `pointNap`, vnd, tongnapcu, is_daily, money, isAdmin,
-                 purchasedGifts, claimed_accumulate, ip_address_register)
-                VALUES (:id, :old_id, :username, :password, :create_time, :update_time, :ban, :point_post, :last_post,
-                        :role, :is_admin, :last_time_login, :last_time_logout, :ip_address, :active, :reward,
-                        :thoi_vang, :server_login, :new_reg, :ip, :phone, :last_server_change_time, :ruby,
-                        :count_card, :type_bonus, :ref, :diemgioithieu, :vnd_old, :tongnap_old, :gioithieu,
-                        :tongnap, :account_old, :point_nap, :vnd, :tongnapcu, :is_daily, :money, :isAdmin,
-                        :purchasedGifts, :claimed_accumulate, :ip_address_register)",
-                    params,
+                (`id`, `old_id`, `username`, `password`, `create_time`, `update_time`, `ban`, `point_post`, `last_post`,
+                 `role`, `is_admin`, `last_time_login`, `last_time_logout`, `ip_address`, `active`, `reward`,
+                 `thoi_vang`, `server_login`, `new_reg`, `ip`, `phone`, `last_server_change_time`, `ruby`,
+                 `count_card`, `type_bonus`, `ref`, `diemgioithieu`, `vnd_old`, `tongnap_old`, `gioithieu`,
+                 `tongnap`, `account_old`, `pointNap`, `vnd`, `tongnapcu`, `is_daily`, `money`, `isAdmin`,
+                 `purchasedGifts`, `claimed_accumulate`, `ip_address_register`)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?)",
+                    Params::Positional(params),
                 )?;
             }
 
@@ -376,48 +402,83 @@ impl MergeTool {
     ) -> Result<()> {
         println!("\n{}", ">>> Merge bảng PLAYER...".bright_yellow());
 
-        // Đơn giản hơn - dùng INSERT ... SELECT với UPDATE ID
         let clan_col = format!("clan_id_sv{}", self.config.merge.target_server);
         let offset = self.config.merge.id_offset;
 
+        // Build mapping trước
+        let players: Vec<Row> = source_conn.query("SELECT id FROM player")?;
+        let total_players = players.len();
+
+        let pb = ProgressBar::new(total_players as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                .unwrap(),
+        );
+        pb.set_message("Building mapping...");
+
+        for row in &players {
+            let old_id: i32 = row.get("id").unwrap();
+            let new_id = old_id + offset;
+            self.player_mapping.insert(old_id, new_id);
+            pb.inc(1);
+        }
+
         if !self.dry_run {
-            // Tạo temp table rồi UPDATE ID sau
+            pb.set_message("Đang tạo temp table...");
+            // Lấy danh sách cột của bảng player (trừ old_id)
+            let columns: Vec<String> = target_conn.query(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'player'
+                 AND COLUMN_NAME != 'old_id'
+                 ORDER BY ORDINAL_POSITION"
+            )?;
+
+            // Tạo danh sách cột với backticks cho các cột đặc biệt
+            let columns_escaped: Vec<String> = columns.iter().map(|c| format!("`{}`", c)).collect();
+            let columns_str = columns_escaped.join(", ");
+
+            // Tạo temp table với cấu trúc giống hệt (không có old_id)
             let sql = format!(
-                r#"CREATE TEMPORARY TABLE temp_player AS SELECT * FROM {}.player"#,
+                "CREATE TEMPORARY TABLE temp_player AS SELECT {} FROM {}.player",
+                columns_str,
                 self.config.server2.database
             );
             target_conn.query_drop(&sql)?;
 
-            // Thêm cột old_id vào temp table và lưu ID cũ
-            target_conn.query_drop("ALTER TABLE temp_player ADD COLUMN old_id INT NULL")?;
-            target_conn.query_drop("UPDATE temp_player SET old_id = id")?;
-
+            pb.set_message("Đang update IDs...");
             // Update IDs trong temp table
-            target_conn.query_drop(&format!("UPDATE temp_player SET id = id + {}", offset))?;
+            target_conn.query_drop(&format!("UPDATE temp_player SET `id` = `id` + {}", offset))?;
             target_conn.query_drop(&format!(
-                "UPDATE temp_player SET account_id = account_id + {}",
+                "UPDATE temp_player SET `account_id` = `account_id` + {} WHERE `account_id` IS NOT NULL",
                 offset
             ))?;
             target_conn.query_drop(&format!(
-                "UPDATE temp_player SET `{}` = IF(`{}` = -1, -1, `{}` + {})",
-                clan_col, clan_col, clan_col, offset
+                "UPDATE temp_player SET `{}` = `{}` + {} WHERE `{}` != -1",
+                clan_col, clan_col, offset, clan_col
             ))?;
 
-            // Insert vào player thật
-            target_conn.query_drop("INSERT INTO player SELECT * FROM temp_player")?;
+            // Thêm cột old_id vào temp table và tính giá trị
+            target_conn.query_drop("ALTER TABLE temp_player ADD COLUMN `old_id` INT NULL")?;
+            target_conn.query_drop(&format!(
+                "UPDATE temp_player SET `old_id` = `id` - {}",
+                offset
+            ))?;
+
+            pb.set_message("Đang insert vào player...");
+            // Insert với chỉ định rõ các cột
+            let insert_columns = format!("{}, `old_id`", columns_str);
+            let select_columns = format!("{}, `old_id`", columns_str);
+
+            target_conn.query_drop(&format!(
+                "INSERT INTO player ({}) SELECT {} FROM temp_player",
+                insert_columns, select_columns
+            ))?;
+
             target_conn.query_drop("DROP TEMPORARY TABLE temp_player")?;
         }
 
-        // Build mapping
-        let players: Vec<Row> = source_conn.query("SELECT id FROM player")?;
-        let total_players = players.len();
-
-        for row in players {
-            let old_id: i32 = row.get("id").unwrap();
-            let new_id = old_id + offset;
-            self.player_mapping.insert(old_id, new_id);
-        }
-
+        pb.finish_with_message("✓ Hoàn thành");
         println!("{} {} players", "✓".green(), total_players);
         Ok(())
     }
@@ -432,6 +493,14 @@ impl MergeTool {
         let table_name = format!("clan_sv{}", self.config.merge.target_server);
         let query = format!("SELECT * FROM {}", table_name);
         let clans: Vec<Row> = source_conn.query(&query)?;
+        let total_clans = clans.len();
+
+        let pb = ProgressBar::new(total_clans as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                .unwrap(),
+        );
 
         for row in &clans {
             let old_id: i32 = row.get("id").unwrap();
@@ -464,9 +533,12 @@ impl MergeTool {
                     ),
                 )?;
             }
+
+            pb.inc(1);
         }
 
-        println!("{} {} clans", "✓".green(), clans.len());
+        pb.finish_with_message("✓ Hoàn thành");
+        println!("{} {} clans", "✓".green(), total_clans);
         Ok(())
     }
 
@@ -495,6 +567,14 @@ impl MergeTool {
         println!("\n{}", ">>> Merge GIFT_CODE_HISTORIES...".bright_yellow());
 
         let histories: Vec<Row> = source_conn.query("SELECT * FROM gift_code_histories")?;
+        let total_histories = histories.len();
+
+        let pb = ProgressBar::new(total_histories as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                .unwrap(),
+        );
 
         for row in &histories {
             let old_player_id: i32 = row.get("player_id").unwrap();
@@ -518,9 +598,12 @@ impl MergeTool {
                     ),
                 )?;
             }
+
+            pb.inc(1);
         }
 
-        println!("{} {} gift histories", "✓".green(), histories.len());
+        pb.finish_with_message("✓ Hoàn thành");
+        println!("{} {} gift histories", "✓".green(), total_histories);
         Ok(())
     }
 
@@ -533,6 +616,14 @@ impl MergeTool {
 
         // Merge player_vip
         if let Ok(vips) = source_conn.query::<Row, _>("SELECT * FROM player_vip") {
+            let total_vips = vips.len();
+            let pb = ProgressBar::new(total_vips as u64);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} player_vip")
+                    .unwrap(),
+            );
+
             for row in vips {
                 let old_player_id: i32 = row.get("player_id").unwrap();
                 let new_player_id = self
@@ -551,10 +642,15 @@ impl MergeTool {
                         ),
                     )?;
                 }
+
+                pb.inc(1);
             }
+
+            pb.finish_with_message("✓ Hoàn thành");
+            println!("{} {} player_vip records", "✓".green(), total_vips);
         }
 
-        println!("{} Hoàn thành", "✓".green());
+        println!("{} Hoàn thành merge bảng phụ", "✓".green());
         Ok(())
     }
 

@@ -35,8 +35,8 @@ struct MergeConfig {
     id_offset: i32,
     target_server: u8,
     // backup_before_merge: bool,
-    backup_directory: String,
-    batch_size: usize,
+    // backup_directory: String,
+    // batch_size: usize,
 }
 
 // ============ CLI Arguments ============
@@ -337,8 +337,10 @@ impl MergeTool {
                     Value::from(row.get::<i32, _>("last_post").unwrap_or(0)),
                     Value::from(row.get::<i32, _>("role").unwrap_or(-1)),
                     Value::from(row.get::<i8, _>("is_admin").unwrap_or(0)),
-                    row.get::<Value, _>("last_time_login").unwrap_or(Value::NULL),
-                    row.get::<Value, _>("last_time_logout").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("last_time_login")
+                        .unwrap_or(Value::NULL),
+                    row.get::<Value, _>("last_time_logout")
+                        .unwrap_or(Value::NULL),
                     row.get::<Value, _>("ip_address").unwrap_or(Value::NULL),
                     Value::from(row.get::<i32, _>("active").unwrap_or(0)),
                     row.get::<Value, _>("reward").unwrap_or(Value::NULL),
@@ -347,7 +349,8 @@ impl MergeTool {
                     Value::from(row.get::<i32, _>("new_reg").unwrap_or(0)),
                     row.get::<Value, _>("ip").unwrap_or(Value::NULL),
                     row.get::<Value, _>("phone").unwrap_or(Value::NULL),
-                    row.get::<Value, _>("last_server_change_time").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("last_server_change_time")
+                        .unwrap_or(Value::NULL),
                     Value::from(row.get::<i32, _>("ruby").unwrap_or(0)),
                     row.get::<Value, _>("count_card").unwrap_or(Value::NULL),
                     row.get::<Value, _>("type_bonus").unwrap_or(Value::NULL),
@@ -361,12 +364,20 @@ impl MergeTool {
                     Value::from(row.get::<i32, _>("pointNap").unwrap_or(0)),
                     Value::from(row.get::<i32, _>("vnd").unwrap_or(0)),
                     Value::from(row.get::<i32, _>("tongnapcu").unwrap_or(0)),
-                    match is_daily { Some(b) => Value::from(b), None => Value::NULL },
+                    match is_daily {
+                        Some(b) => Value::from(b),
+                        None => Value::NULL,
+                    },
                     row.get::<Value, _>("money").unwrap_or(Value::NULL),
-                    match is_admin_bit { Some(b) => Value::from(b), None => Value::NULL },
+                    match is_admin_bit {
+                        Some(b) => Value::from(b),
+                        None => Value::NULL,
+                    },
                     row.get::<Value, _>("purchasedGifts").unwrap_or(Value::NULL),
-                    row.get::<Value, _>("claimed_accumulate").unwrap_or(Value::NULL),
-                    row.get::<Value, _>("ip_address_register").unwrap_or(Value::NULL),
+                    row.get::<Value, _>("claimed_accumulate")
+                        .unwrap_or(Value::NULL),
+                    row.get::<Value, _>("ip_address_register")
+                        .unwrap_or(Value::NULL),
                 ];
 
                 target_conn.exec_drop(
@@ -431,7 +442,7 @@ impl MergeTool {
                 "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
                  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'player'
                  AND COLUMN_NAME != 'old_id'
-                 ORDER BY ORDINAL_POSITION"
+                 ORDER BY ORDINAL_POSITION",
             )?;
 
             // Tạo danh sách cột với backticks cho các cột đặc biệt
@@ -441,8 +452,7 @@ impl MergeTool {
             // Tạo temp table với cấu trúc giống hệt (không có old_id)
             let sql = format!(
                 "CREATE TEMPORARY TABLE temp_player AS SELECT {} FROM {}.player",
-                columns_str,
-                self.config.server2.database
+                columns_str, self.config.server2.database
             );
             target_conn.query_drop(&sql)?;
 
@@ -518,14 +528,12 @@ impl MergeTool {
             pb.set_message("Đang tạo temp table...");
 
             // Lấy danh sách cột của bảng clan
-            let columns: Vec<String> = target_conn.query(
-                &format!(
-                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            let columns: Vec<String> = target_conn.query(&format!(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
                      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{}'
                      ORDER BY ORDINAL_POSITION",
-                    table_name
-                )
-            )?;
+                table_name
+            ))?;
 
             // Tạo danh sách cột với backticks
             let columns_escaped: Vec<String> = columns.iter().map(|c| format!("`{}`", c)).collect();
@@ -534,9 +542,7 @@ impl MergeTool {
             // Tạo temp table với cấu trúc giống hệt
             let sql = format!(
                 "CREATE TEMPORARY TABLE temp_clan AS SELECT {} FROM {}.{}",
-                columns_str,
-                self.config.server2.database,
-                table_name
+                columns_str, self.config.server2.database, table_name
             );
             target_conn.query_drop(&sql)?;
 
@@ -546,7 +552,8 @@ impl MergeTool {
 
             // Update members JSON - cập nhật player_id trong JSON
             pb.set_message("Đang update members JSON...");
-            let temp_clans: Vec<Row> = target_conn.query("SELECT `id`, `members` FROM temp_clan")?;
+            let temp_clans: Vec<Row> =
+                target_conn.query("SELECT `id`, `members` FROM temp_clan")?;
 
             for row in &temp_clans {
                 let clan_id: i32 = row.get("id").unwrap();
@@ -578,6 +585,53 @@ impl MergeTool {
     }
 
     fn update_clan_members_json(&self, json_str: &str) -> Result<String> {
+        // Parse outer array
+        let members_raw: Vec<JsonValue> = serde_json::from_str(json_str)?;
+        let mut updated_members: Vec<String> = Vec::new();
+
+        for member_value in &members_raw {
+            // Mỗi member có thể là string chứa JSON hoặc object trực tiếp
+            let member_str = match member_value {
+                JsonValue::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+
+            // Parse member JSON string thành object
+            let mut member_obj: serde_json::Map<String, JsonValue> =
+                serde_json::from_str(&member_str)?;
+
+            // Update player id từ old_id sang new_id
+            if let Some(id_value) = member_obj.get("id") {
+                if let Some(old_id) = id_value.as_i64() {
+                    let old_id_i32 = old_id as i32;
+                    if let Some(&new_id) = self.player_mapping.get(&old_id_i32) {
+                        member_obj.insert("id".to_string(), JsonValue::from(new_id));
+                        info!("Updated member id: {} -> {}", old_id_i32, new_id);
+                    }
+                }
+            }
+
+            // Convert back to string
+            let updated_member_str = serde_json::to_string(&member_obj)?;
+
+            // Giữ nguyên format gốc
+            if member_value.is_string() {
+                // Format gốc là array of strings
+                updated_members.push(updated_member_str);
+            } else {
+                // Format gốc là array of objects - return early
+                return self.update_clan_members_json_as_objects(json_str);
+            }
+        }
+
+        // Rebuild array of strings
+        let result: Vec<JsonValue> = updated_members.into_iter().map(JsonValue::String).collect();
+
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    // Fallback cho trường hợp format là array of objects
+    fn update_clan_members_json_as_objects(&self, json_str: &str) -> Result<String> {
         let mut members: Vec<JsonValue> = serde_json::from_str(json_str)?;
 
         for member in &mut members {

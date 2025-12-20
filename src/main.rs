@@ -491,7 +491,10 @@ impl MergeTool {
         println!("\n{}", ">>> Merge bảng CLAN...".bright_yellow());
 
         let table_name = format!("clan_sv{}", self.config.merge.target_server);
-        let query = format!("SELECT * FROM {}", table_name);
+        let offset = self.config.merge.id_offset;
+
+        // Build mapping trước
+        let query = format!("SELECT id FROM {}", table_name);
         let clans: Vec<Row> = source_conn.query(&query)?;
         let total_clans = clans.len();
 
@@ -501,40 +504,72 @@ impl MergeTool {
                 .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
                 .unwrap(),
         );
+        pb.set_message("Building mapping...");
 
         for row in &clans {
             let old_id: i32 = row.get("id").unwrap();
-            let new_id = old_id + self.config.merge.id_offset;
-
+            let new_id = old_id + offset;
             self.clan_mapping.insert(old_id, new_id);
+            pb.inc(1);
+        }
 
-            if !self.dry_run {
-                // Update members JSON
-                let members_json: String = row.get("members").unwrap();
-                let updated_members = self.update_clan_members_json(&members_json)?;
+        if !self.dry_run {
+            pb.set_position(0);
+            pb.set_message("Đang tạo temp table...");
 
-                target_conn.exec_drop(
-                    &format!(
-                        r"INSERT INTO {}
-                        (id, name, slogan, img_id, power_point, max_member, clan_point, level, members)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        table_name
-                    ),
-                    (
-                        new_id,
-                        row.get::<String, _>("name").unwrap_or_default(),
-                        row.get::<String, _>("slogan").unwrap_or_default(),
-                        row.get::<i32, _>("img_id").unwrap_or(0),
-                        row.get::<i64, _>("power_point").unwrap_or(0),
-                        row.get::<i8, _>("max_member").unwrap_or(10),
-                        row.get::<i32, _>("clan_point").unwrap_or(0),
-                        row.get::<i32, _>("level").unwrap_or(1),
-                        updated_members,
-                    ),
-                )?;
+            // Lấy danh sách cột của bảng clan
+            let columns: Vec<String> = target_conn.query(
+                &format!(
+                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{}'
+                     ORDER BY ORDINAL_POSITION",
+                    table_name
+                )
+            )?;
+
+            // Tạo danh sách cột với backticks
+            let columns_escaped: Vec<String> = columns.iter().map(|c| format!("`{}`", c)).collect();
+            let columns_str = columns_escaped.join(", ");
+
+            // Tạo temp table với cấu trúc giống hệt
+            let sql = format!(
+                "CREATE TEMPORARY TABLE temp_clan AS SELECT {} FROM {}.{}",
+                columns_str,
+                self.config.server2.database,
+                table_name
+            );
+            target_conn.query_drop(&sql)?;
+
+            pb.set_message("Đang update IDs...");
+            // Update IDs trong temp table
+            target_conn.query_drop(&format!("UPDATE temp_clan SET `id` = `id` + {}", offset))?;
+
+            // Update members JSON - cập nhật player_id trong JSON
+            pb.set_message("Đang update members JSON...");
+            let temp_clans: Vec<Row> = target_conn.query("SELECT `id`, `members` FROM temp_clan")?;
+
+            for row in &temp_clans {
+                let clan_id: i32 = row.get("id").unwrap();
+                let members_json: String = row.get("members").unwrap_or_default();
+
+                if !members_json.is_empty() {
+                    let updated_members = self.update_clan_members_json(&members_json)?;
+                    target_conn.exec_drop(
+                        "UPDATE temp_clan SET `members` = ? WHERE `id` = ?",
+                        (&updated_members, clan_id),
+                    )?;
+                }
+                pb.inc(1);
             }
 
-            pb.inc(1);
+            pb.set_message("Đang insert vào clan...");
+            // Insert vào bảng chính
+            target_conn.query_drop(&format!(
+                "INSERT INTO {} ({}) SELECT {} FROM temp_clan",
+                table_name, columns_str, columns_str
+            ))?;
+
+            target_conn.query_drop("DROP TEMPORARY TABLE temp_clan")?;
         }
 
         pb.finish_with_message("✓ Hoàn thành");
